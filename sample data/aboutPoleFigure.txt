@@ -1,0 +1,5 @@
+極点測定のサンプルデータについては公開できるものが2023/04/06時点でcsvデータとして無い。
+生データは存在するのでcsvデータに変換し次第追加する。
+
+As of 2023/04/06, there is no csv data available for the sample data of the pole figure measurements.
+Raw data exists and will be added as soon as it is converted to csv data.
