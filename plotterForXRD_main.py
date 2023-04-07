@@ -56,9 +56,15 @@ class PlotWindowXRD(QWidget):
         self.controlPanel.setWindowTitle("Control Panel")
         self.controlPanel.setFixedSize(300, 400)
 
+        labelPlotType = QLabel("Plot Type", self.controlPanel)
+
         self.comboPlotType = QComboBox(self.controlPanel)
         self.plotType =['2theta-omega', 'Rocking Curve', 'Pole Figure']
         self.comboPlotType.addItems(i for i in self.plotType)
+
+        self.comboSaveExt = QComboBox(self.controlPanel)
+        self.saveExt =['PNG(*.png)', 'PDF(*.pdf)', 'SVG(*.svg)']
+        self.comboSaveExt.addItems(i for i in self.saveExt)
 
         btnLoad = QPushButton("Browse", self.controlPanel)
         btnLoad.clicked.connect(self.loadXRD)
@@ -69,14 +75,22 @@ class PlotWindowXRD(QWidget):
         btnSave = QPushButton("Save", self.controlPanel)
         btnSave.clicked.connect(self.saveFigure)
 
+        typeLayout = QHBoxLayout()
+        typeLayout.addWidget(labelPlotType)
+        typeLayout.addWidget(self.comboPlotType)
+
         btnLayout = QHBoxLayout()
         btnLayout.addWidget(btnLoad)
         btnLayout.addWidget(btnPlot)
-        btnLayout.addWidget(btnSave)
+
+        saveLayout = QHBoxLayout()
+        saveLayout.addWidget(self.comboSaveExt)
+        saveLayout.addWidget(btnSave)
 
         ctrlLayout = QVBoxLayout()
-        ctrlLayout.addWidget(self.comboPlotType)
+        ctrlLayout.addLayout(typeLayout)
         ctrlLayout.addLayout(btnLayout)
+        ctrlLayout.addLayout(saveLayout)
 
         ctrWidget = QWidget()
         ctrWidget.setLayout(ctrlLayout)
@@ -246,9 +260,13 @@ class PlotWindowXRD(QWidget):
             if 'Psi and Phi' in self.dictData.keys():
                 print(self.dictData['Psi and Phi'])
 
-    #プロットしたグラフの保存を行うメソッド(実装予定)
+    #プロットしたグラフの保存を行う
     def saveFigure(self):
-        pass
+        fileType = self.comboSaveExt.currentText()
+
+        fPath = QFileDialog.getSaveFileName(self, 'Save file', '/home', fileType) #ファイルダイアログの表示
+        if fPath[0]:
+            self.fig.savefig(fPath[0], dpi = 300, bbox_inches = 'tight', pad_inches = 0.1, transparent = True)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
