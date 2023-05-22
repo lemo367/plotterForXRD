@@ -11,6 +11,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationTool
 from matplotlib.figure import Figure
 import scipy.special
 import scipy.optimize
+import scipy.signal
 import csv
 
 #Definition of Main window
@@ -137,9 +138,6 @@ class PlotWindowXRD(QWidget):
             "font.size": 12
         }
         plt.rcParams.update(config)
-
-        if self.ax in self.fig.axes:
-            self.ax.remove()
 
         if plType == '2theta-omega':
             self.plotPanel.setGeometry(0, 0, 800, 600)
