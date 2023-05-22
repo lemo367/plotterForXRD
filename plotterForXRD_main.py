@@ -166,11 +166,9 @@ class PlotWindowXRD(QWidget):
 
             df = self.dictData['data']
             plotRockingCurve = self.ax.plot(df['Angle'], df['Intensity']/np.max(df['Intensity']), c = "red", lw = 0.8)
-            fit = self.getFWHMofRCbyFitting(df['Angle'], df['Intensity']/np.max(df['Intensity']))
-            FWHM = self.getFWHMofRCbyFitting(df['Angle'], df['Intensity']/np.max(df['Intensity']))['FWHM']
+            fwhm = self.getFWHMofRC(df['Angle'], df['Intensity'])
 
-            print(fit)
-            print(f'FWHM of rocking curve is {FWHM} deg.')
+            print(f'FWHM of rocking curve is {fwhm[0]} deg.')
 
         elif plType == 'Pole Figure':
             self.plotPanel.setGeometry(0, 0, 800, 800)
@@ -273,7 +271,7 @@ class PlotWindowXRD(QWidget):
         if fPath[0]:
             self.fig.savefig(fPath[0], dpi = 300, bbox_inches = 'tight', pad_inches = 0.1, transparent = True)
 
-    def getFWHMofRCbyFitting(self, x, y):#rocking curveのピークのFWHMをフィッティングで求める
+    def getFWHMofRC(self, x, y):#rocking curveのピークのFWHMを求める
         dataNo = len(x)-1
         x_start, x_end = x[0], x[dataNo]
         y_start, y_end = y[0], y[dataNo]
@@ -283,32 +281,11 @@ class PlotWindowXRD(QWidget):
         a, b = Slope_Intercept[0], Slope_Intercept[1] #a, b: Slope and Intercept, 1次関数の傾きと切片
         B_x = a*x+b #B_x: B(x), 1次関数の式
 
-        def voigt(x, *params): #Voigt関数を定義
-            voigtFunction = np.zeros_like(x)
+        signal = y-B_x #signal: y-B(x), 1次関数を引いたロッキングカーブ
+        peaks, _ = scipy.signal.find_peaks(signal) #ピークの検出
+        fwhm = scipy.signal.peak_widths(signal, peaks, rel_height = 0.5) #ピークの半値幅を求める
 
-            intensity = params[0]
-            center = params[1]
-            gaussianWidth = params[2]
-            naturalWidthCu = 2.5 #Cuの自然幅, 単位はeV
-            #delLambda = 1239*naturalWidthCu/(4*(8047.8**2) - naturalWidthCu**2) #delLambda: delta lambda, 単位はnm
-            lorentzianWidth = 1.44640182e-04 #単位はdeg
-
-            z = (x - center + 1j*lorentzianWidth)/(gaussianWidth * np.sqrt(2.0))
-            w = scipy.special.wofz(z)
-            voigtFunction = intensity * np.real(w) / (gaussianWidth * np.sqrt(2.0 * np.pi))
-
-            return voigtFunction
-        
-        y_sub = y-B_x #y_sub: y subtracted B_x, 線形バックグラウンドを除いたデータ
-        guess_init = (np.max(y), (x_end-x_start)/2, 0.5) #フィッティングの初期値を設定, [ピークの高さ, ピークの中心, ガウシアン幅], ローレンチアン幅は2.5(Cu Ka1の自然幅)として固定する
-        constraint = ([0, x_start, 0], [np.inf, x_end, np.inf]) #フィッティングの制約条件を設定, [ピークの高さ, ピークの中心, ガウシアン幅]
-        popt, pcov = scipy.optimize.curve_fit(voigt, x, y_sub, p0 = guess_init, bounds = constraint, maxfev = 10000) #フィッティングを行う
-        
-        paramName = ['intensity', 'peak position', 'Wid_g']
-        dictOptParams = {paramName[i] : popt[i] for i in range(len(paramName))} #フィッティングの結果を格納
-        dictOptParams['FWHM'] = 2.0*np.sqrt(2.0*np.log(2.0))*dictOptParams['Wid_g'] #FWHM = 2.3548*Wid_g, FWHM: Full Width at Half Maximum, ピークの半分の高さになる幅
-
-        return dictOptParams
+        return fwhm
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
