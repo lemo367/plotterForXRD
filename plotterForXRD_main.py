@@ -2,7 +2,6 @@ import sys
 from PyQt5.QtWidgets import(
     QMainWindow, QAction, QFileDialog, QApplication, QMdiArea, QMdiSubWindow, QLabel,
     QComboBox, QPushButton, QWidget, QDoubleSpinBox, QCheckBox, QVBoxLayout, QHBoxLayout, QMenu, QTextEdit)
-from PyQt5.QtGui import QFont
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,6 +11,7 @@ from matplotlib.figure import Figure
 import scipy.special
 import scipy.optimize
 import scipy.signal
+import scipy.constants as const
 import csv
 
 #Definition of Main window
@@ -165,10 +165,17 @@ class PlotWindowXRD(QWidget):
             self.ax.minorticks_on()
 
             df = self.dictData['data']
-            plotRockingCurve = self.ax.plot(df['Angle'], df['Intensity']/np.max(df['Intensity']), c = "red", lw = 0.8)
-            fwhm = self.getFWHMofRC(df['Angle'], df['Intensity'])
+            twoTheta = self.dictData['2Theta']
+            wavelength = self.dictData['LKalpha1']
+            #fit = self.getFWHMofRCbyFitting(df['Angle'], df['Intensity']/np.max(df['Intensity']), twoTheta, wavelength)
+            #FWHM = fit['FWHM']
 
-            print(f'FWHM of rocking curve is {fwhm[0]} deg.')
+            plotRockingCurve = self.ax.plot(df['Angle'], df['Intensity']/np.max(df['Intensity']), c = "red", lw = 0.8)
+            #plotFit = self.ax.plot(df['Angle'], fit['fit']/np.max(fit['fit']), c = "blue", lw = 0.8)
+
+            #print(fit)
+            #print(fit['peaks'])
+            #print(f'FWHM of rocking curve is {FWHM} deg.')
 
         elif plType == 'Pole Figure':
             self.plotPanel.setGeometry(0, 0, 800, 800)
@@ -217,7 +224,12 @@ class PlotWindowXRD(QWidget):
                 csvData = list(reader) #csvファイルの内容をリストに格納
                 
                 for i, row in enumerate(csvData): #csvファイルの内容を1行ずつ読み込む
-                    if '[Scan points]' in row: #測定データの開始行を検出, 想定しているデータでは[Scan points]の直後に測定データが格納されている(2theta-omegaスキャン及びrocking curveの場合)
+                    if 'K-Alpha1 wavelength' in row: #Cu K-Alpha1波長の取り込み
+                        LKalpha1 = float(row[1]) #Cu K-Alpha1波長を格納, lambda K alpha1, 単位はÅ
+                        self.dictData['LKalpha1'] = LKalpha1
+                        continue #次の行へ
+                    
+                    elif '[Scan points]' in row: #測定データの開始行を検出, 想定しているデータでは[Scan points]の直後に測定データが格納されている(2theta-omegaスキャン及びrocking curveの場合)
                         data = pd.read_csv(fPath[0], skiprows = i+1, header = 0, names = ["Angle", "TimePerStep", "Intensity", "ESD"])
                         self.dictData['data'] = data
 
@@ -225,7 +237,16 @@ class PlotWindowXRD(QWidget):
                             if 'Scan axis' in row:
                                 scanAxis = row[1] #測定軸の種類を格納, 2Theta-OmegaかOmegaが返ってくる
                                 self.dictData['scanAxis/type'] = scanAxis
-                                break #測定軸の種類を検出したらループを抜ける
+
+                                if scanAxis == 'Omega': #Omegaスキャンの場合
+                                    for k, row in enumerate(csvData):
+                                        if '2Theta' in row:
+                                            value_2t = float(row[1])
+                                            self.dictData['2Theta'] = value_2t
+                                            break
+
+                                elif scanAxis == '2Theta-Omega': #2Theta-Omegaスキャンの場合
+                                    break
                     
                         break #測定データの開始行を検出したらループを抜ける
 
@@ -255,13 +276,16 @@ class PlotWindowXRD(QWidget):
 
             elif self.dictData['scanAxis/type'] == 'Omega':
                 self.comboPlotType.setCurrentText(self.plotType[1])
+                if '2Theta' in self.dictData.keys() and 'LKalpha1' in self.dictData.keys():
+                    print(self.dictData['2Theta'])
+                    print(self.dictData['LKalpha1'])
 
             elif self.dictData['scanAxis/type'] == 'Pole Figure':
                 self.comboPlotType.setCurrentText(self.plotType[2])
+                if 'Psi and Phi' in self.dictData.keys():
+                    print(self.dictData['Psi and Phi'])
         
             print(self.dictData['data'], self.dictData['scanAxis/type'])
-            if 'Psi and Phi' in self.dictData.keys():
-                print(self.dictData['Psi and Phi'])
 
     #プロットしたグラフの保存を行う
     def saveFigure(self):
@@ -271,7 +295,7 @@ class PlotWindowXRD(QWidget):
         if fPath[0]:
             self.fig.savefig(fPath[0], dpi = 300, bbox_inches = 'tight', pad_inches = 0.1, transparent = True)
 
-    def getFWHMofRC(self, x, y):#rocking curveのピークのFWHMを求める
+    def getFWHMofRCbyFitting(self, x, y, twoTheta, waveLength):#rocking curveのピークのFWHMをフィッティングで求める
         dataNo = len(x)-1
         x_start, x_end = x[0], x[dataNo]
         y_start, y_end = y[0], y[dataNo]
@@ -281,11 +305,40 @@ class PlotWindowXRD(QWidget):
         a, b = Slope_Intercept[0], Slope_Intercept[1] #a, b: Slope and Intercept, 1次関数の傾きと切片
         B_x = a*x+b #B_x: B(x), 1次関数の式
 
-        signal = y-B_x #signal: y-B(x), 1次関数を引いたロッキングカーブ
-        peaks, _ = scipy.signal.find_peaks(signal) #ピークの検出
-        fwhm = scipy.signal.peak_widths(signal, peaks, rel_height = 0.5) #ピークの半値幅を求める
+        naturalWidthCu = 2.5 #Cuの自然幅, 単位はeV
+        energyOfXRay = (const.Planck*const.c/const.e)/(waveLength*1e-10) # in eV
+        delLambda = (const.Planck*const.c/const.e)*(naturalWidthCu)/(4*energyOfXRay**2 - naturalWidthCu**2) # in nm
+        dSpacing = waveLength/(2*np.sin(np.deg2rad(twoTheta/2))) # in Å
+        self.delTheta = np.rad2deg(np.arcsin(10*delLambda/(2*dSpacing))) # in deg
 
-        return fwhm
+        def voigt(x, *params): #Voigt関数を定義
+            voigtFunction = np.zeros_like(x)
+
+            intensity = params[0]
+            center = params[1]
+            gaussianWidth = params[2]
+            lorentzianWidth = params[3] #単位はdeg
+
+            z = (x - center + 1j*lorentzianWidth)/(gaussianWidth * np.sqrt(2.0))
+            w = scipy.special.wofz(z)
+            voigtFunction = intensity * np.real(w) / (gaussianWidth * np.sqrt(2.0 * np.pi))
+
+            return voigtFunction
+        
+        y_sub = y-B_x #y_sub: y subtracted B_x, 線形バックグラウンドを除いたデータ
+        guess_init = (np.max(y), (x_end-x_start)/2, 0.5, self.delTheta) #フィッティングの初期値を設定, [ピークの高さ, ピークの中心, ガウシアン幅, ローレンチアン幅]
+        constraint = ([0, x_start, 0, 0], [np.inf, x_end, np.inf, np.inf]) #フィッティングの制約条件を設定, [ピークの高さ, ピークの中心, ガウシアン幅]
+        popt, pcov = scipy.optimize.curve_fit(voigt, x, y_sub, p0 = guess_init, bounds = constraint, maxfev = 10000) #フィッティングを行う
+        
+        paramName = ['intensity', 'peak position', 'Wid_g', 'Wid_l']
+        dictOptParams = {paramName[i] : popt[i] for i in range(len(paramName))} #フィッティングの結果を格納
+        #dictOptParams['FWHM'] = (dictOptParams['Wid_l']/2) + np.sqrt((dictOptParams['Wid_l']**2)/4 + dictOptParams['Wid_g']**2) #FWHM: Full Width at Half Maximum, ピークの半分の高さになる幅
+        dictOptParams['fit'] = voigt(x, *popt) + B_x
+        peaks, _ = scipy.signal.find_peaks(dictOptParams['fit']) #ピークの位置を取得
+        fwhm = scipy.signal.peak_widths(dictOptParams['fit'], peaks, rel_height = 0.5) #ピークの半分の高さになる幅を取得
+        dictOptParams['FWHM'] = fwhm #FWHM: Full Width at Half Maximum, ピークの半分の高さになる幅
+        dictOptParams['peaks'] = peaks
+        return dictOptParams
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
