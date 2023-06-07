@@ -165,17 +165,13 @@ class PlotWindowXRD(QWidget):
             self.ax.minorticks_on()
 
             df = self.dictData['data']
-            twoTheta = self.dictData['2Theta']
             wavelength = self.dictData['LKalpha1']
-            #fit = self.getFWHMofRCbyFitting(df['Angle'], df['Intensity']/np.max(df['Intensity']), twoTheta, wavelength)
-            #FWHM = fit['FWHM']
 
+            peaks, fwhm = self.getFWHMofRCbyFitting(df['Angle'], df['Intensity'])
             plotRockingCurve = self.ax.plot(df['Angle'], df['Intensity']/np.max(df['Intensity']), c = "red", lw = 0.8)
-            #plotFit = self.ax.plot(df['Angle'], fit['fit']/np.max(fit['fit']), c = "blue", lw = 0.8)
 
-            #print(fit)
-            #print(fit['peaks'])
-            #print(f'FWHM of rocking curve is {FWHM} deg.')
+            print(peaks, peaks * self.dictData['stepSize'] + df['Angle'][0])
+            print(f'FWHM = {fwhm[0]*self.dictData["stepSize"]} deg.')
 
         elif plType == 'Pole Figure':
             self.plotPanel.setGeometry(0, 0, 800, 800)
@@ -240,9 +236,12 @@ class PlotWindowXRD(QWidget):
 
                                 if scanAxis == 'Omega': #Omegaスキャンの場合
                                     for k, row in enumerate(csvData):
-                                        if '2Theta' in row:
-                                            value_2t = float(row[1])
-                                            self.dictData['2Theta'] = value_2t
+                                        if 'Scan step size' in row:
+                                            stepSize = float(row[1])
+                                            self.dictData['stepSize'] = stepSize
+                                            continue
+
+                                        elif '2Theta' in self.dictData.keys() and 'stepSize' in self.dictData.keys():
                                             break
 
                                 elif scanAxis == '2Theta-Omega': #2Theta-Omegaスキャンの場合
@@ -295,7 +294,7 @@ class PlotWindowXRD(QWidget):
         if fPath[0]:
             self.fig.savefig(fPath[0], dpi = 300, bbox_inches = 'tight', pad_inches = 0.1, transparent = True)
 
-    def getFWHMofRCbyFitting(self, x, y, twoTheta, waveLength):#rocking curveのピークのFWHMをフィッティングで求める
+    def getFWHMofRCbyFitting(self, x, y):#rocking curveのピークのFWHMをフィッティングで求める
         dataNo = len(x)-1
         x_start, x_end = x[0], x[dataNo]
         y_start, y_end = y[0], y[dataNo]
@@ -305,40 +304,11 @@ class PlotWindowXRD(QWidget):
         a, b = Slope_Intercept[0], Slope_Intercept[1] #a, b: Slope and Intercept, 1次関数の傾きと切片
         B_x = a*x+b #B_x: B(x), 1次関数の式
 
-        naturalWidthCu = 2.5 #Cuの自然幅, 単位はeV
-        energyOfXRay = (const.Planck*const.c/const.e)/(waveLength*1e-10) # in eV
-        delLambda = (const.Planck*const.c/const.e)*(naturalWidthCu)/(4*energyOfXRay**2 - naturalWidthCu**2) # in nm
-        dSpacing = waveLength/(2*np.sin(np.deg2rad(twoTheta/2))) # in Å
-        self.delTheta = np.rad2deg(np.arcsin(10*delLambda/(2*dSpacing))) # in deg
+        index_max = np.argmax(y)
+        y_Bx = (y-B_x)/np.max(y-B_x) #y_Bx: y-B(x), yとB(x)の差分
+        fwhm, relHeight, l_cross, r_cross = scipy.signal.peak_widths(y_Bx, [index_max], rel_height = 0.5) #ピークの半分の高さになる幅を取得
 
-        def voigt(x, *params): #Voigt関数を定義
-            voigtFunction = np.zeros_like(x)
-
-            intensity = params[0]
-            center = params[1]
-            gaussianWidth = params[2]
-            lorentzianWidth = params[3] #単位はdeg
-
-            z = (x - center + 1j*lorentzianWidth)/(gaussianWidth * np.sqrt(2.0))
-            w = scipy.special.wofz(z)
-            voigtFunction = intensity * np.real(w) / (gaussianWidth * np.sqrt(2.0 * np.pi))
-
-            return voigtFunction
-        
-        y_sub = y-B_x #y_sub: y subtracted B_x, 線形バックグラウンドを除いたデータ
-        guess_init = (np.max(y), (x_end-x_start)/2, 0.5, self.delTheta) #フィッティングの初期値を設定, [ピークの高さ, ピークの中心, ガウシアン幅, ローレンチアン幅]
-        constraint = ([0, x_start, 0, 0], [np.inf, x_end, np.inf, np.inf]) #フィッティングの制約条件を設定, [ピークの高さ, ピークの中心, ガウシアン幅]
-        popt, pcov = scipy.optimize.curve_fit(voigt, x, y_sub, p0 = guess_init, bounds = constraint, maxfev = 10000) #フィッティングを行う
-        
-        paramName = ['intensity', 'peak position', 'Wid_g', 'Wid_l']
-        dictOptParams = {paramName[i] : popt[i] for i in range(len(paramName))} #フィッティングの結果を格納
-        #dictOptParams['FWHM'] = (dictOptParams['Wid_l']/2) + np.sqrt((dictOptParams['Wid_l']**2)/4 + dictOptParams['Wid_g']**2) #FWHM: Full Width at Half Maximum, ピークの半分の高さになる幅
-        dictOptParams['fit'] = voigt(x, *popt) + B_x
-        peaks, _ = scipy.signal.find_peaks(dictOptParams['fit']) #ピークの位置を取得
-        fwhm = scipy.signal.peak_widths(dictOptParams['fit'], peaks, rel_height = 0.5) #ピークの半分の高さになる幅を取得
-        dictOptParams['FWHM'] = fwhm #FWHM: Full Width at Half Maximum, ピークの半分の高さになる幅
-        dictOptParams['peaks'] = peaks
-        return dictOptParams
+        return index_max, fwhm
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
